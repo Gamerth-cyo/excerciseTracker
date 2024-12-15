@@ -9,6 +9,7 @@ import {
   View,
   FlatList,
   TouchableOpacity,
+  Vibration,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { auth, db } from './firebaseconfig.js';
@@ -116,25 +117,71 @@ export default function App() {
   };
 
   const handleLongPress = (id: string) => {
-    setSelectedExercises((prevSelected: any) =>
-      prevSelected.includes(id)
-        ? prevSelected.filter((selectedId: any) => selectedId !== id)
-        : [...prevSelected, id]
-    );
+    setSelectedExercises((prevSelected) => {
+      const newArr = exercises.filter((exercise) => {
+        if (exercise.id === id) return exercise;
+      })
+      console.log("newArr-->", newArr);
+      return [...prevSelected, ...newArr];
+    });
+    Vibration.vibrate(100);
+  };
+
+  const handlePress = (item: Exercises) => {
+    setSelectedExercises((prevSelected) => {
+      if (!prevSelected?.length) return prevSelected;
+      let isSelected = false;
+      prevSelected.forEach((selected) => {
+        if (selected.id === item.id) return isSelected = true;
+      });
+      if (isSelected) {
+        return prevSelected.filter((selected) => {
+          if (selected.id !== item.id) return selected;
+        })
+      }
+      return [...prevSelected, item];
+    });
   };
 
   const deleteSelected = async () => {
-    const remainingExercises = exercises.filter(
-      (exercise) => !selectedExercises.includes(exercise.id as any)
+    const remainingExercises = exercises.filter((exercise) =>
+      !selectedExercises.some((selected) => selected.id === exercise.id)
     );
-    setExercises(remainingExercises);
-    setSelectedExercises([]);
+
+    console.log("remainingExercises --->", remainingExercises);
+
+    setExercises(remainingExercises); // Actualiza el estado de los ejercicios
+    setSelectedExercises([]); // Limpia los ejercicios seleccionados
+
     if (user?.uid) {
-      await saveExercises(user.uid, remainingExercises);
+      await saveExercises(user.uid, remainingExercises); // Guarda los ejercicios restantes
     }
   };
 
-  const isSelected = (id: string) => selectedExercises.includes(id as any);
+
+  const refreshSelected = async () => {
+    const remainingExercises = selectedExercises.map((selected) => {
+      const newArr = exercises.filter((item) => { if (item.id === selected.id) return item; });
+      return newArr;
+    }).flat(Infinity);
+
+    console.log("remainingExercises --->", remainingExercises);
+    setExercises((a: any) => {
+      const newArr = [...remainingExercises] as any;
+      newArr.map((item: any) => { item.actualReps = 0; })
+      return a;
+    });
+    setSelectedExercises([]);
+    if (user?.uid) {
+      await saveExercises(user.uid, remainingExercises.flat());
+    }
+  };
+
+  const isSelected = (id: string) => {
+    const arr = selectedExercises.filter((item) => item.id === id);
+    if (arr.length) return true;
+    return false;
+  };
 
   return (
     <SafeAreaProvider>
@@ -143,77 +190,87 @@ export default function App() {
           animated={true}
           backgroundColor="#61dafb"
         />
-        {user ? (
-          <>
-            <View style={styles.header}>
-              <Text style={styles.headerText}>¡Hola, {user.email}!</Text>
-              <Pressable onPress={logout}>
-                <Ionicons name="log-out-outline" size={24} color="red" />
-              </Pressable>
-            </View>
-            {selectedExercises.length > 0 && (
-              <View style={styles.deleteBar}>
-                <Text style={styles.deleteText}>{selectedExercises.length} seleccionado(s)</Text>
-                <Pressable onPress={deleteSelected}>
-                  <MaterialIcons name="delete" size={24} color="red" />
+        {
+          user ? (
+            <>
+              <View style={styles.header}>
+                <Text style={styles.headerText}>¡Hola, {user.email}!</Text>
+                <Pressable onPress={logout}>
+                  <Ionicons name="log-out-outline" size={24} color="red" />
                 </Pressable>
               </View>
-            )}
-            <FlatList
-              style={styles.flatList}
-              data={exercises}
-              keyExtractor={(item) => item.id.toString()}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  onLongPress={() => handleLongPress(item.id)}
-                  style={[styles.exerciseItem, isSelected(item.id) && styles.selectedItem]}
-                >
-                  {isSelected(item.id) && (
-                    <Ionicons name="checkmark-circle" size={24} color="blue" />
-                  )}
-                  <View>
-                    <Text style={styles.exerciseName}>{item.exerciseName}</Text>
-                    <Text style={styles.exerciseReps}>
-                      {item.actualReps}/{item.totalReps} repeticiones
-                    </Text>
+              {
+                selectedExercises.length > 0 && (
+                  <View style={styles.deleteBar}>
+                    <Text style={styles.deleteText}>{selectedExercises.length} seleccionado(s)</Text>
+                    <Pressable onPress={refreshSelected}>
+                      <MaterialIcons name="refresh" size={24} color="red" />
+                    </Pressable>
+                    <Pressable onPress={deleteSelected}>
+                      <MaterialIcons name="delete" size={24} color="red" />
+                    </Pressable>
+
                   </View>
-                  {
-                    !isSelected(item.id) && item.actualReps !== item.totalReps ? (
-                      <Pressable style={styles.addRepsButton} onPress={() => updateReps(item.id)}>
-                        <Text style={styles.addRepsText}>+10</Text>
-                      </Pressable>
-                    ) : <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Text style={{ fontSize: 24 }}>😊</Text>
-                      <Icon name="check" size={20} color="green" />
+                )
+              }
+              <FlatList
+                style={styles.flatList}
+                data={exercises}
+                keyExtractor={(item) => item.id.toString()}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    onLongPress={() => handleLongPress(item.id)}
+                    style={[styles.exerciseItem, isSelected(item.id) && styles.selectedItem]}
+                    onPress={() => handlePress(item)}
+                  >
+                    {
+                      isSelected(item.id) && (
+                        <Ionicons name="checkmark-circle" size={24} color="blue" />
+                      )
+                    }
+                    <View>
+                      <Text style={styles.exerciseName}>{item.exerciseName}</Text>
+                      <Text style={styles.exerciseReps}>
+                        {item.actualReps}/{item.totalReps} repeticiones
+                      </Text>
                     </View>
-                  }
-                </TouchableOpacity>
-              )}
-            />
-            <Pressable style={styles.addButton} onPress={() => setVisible(true)}>
-              <Text style={styles.addButtonText}>+</Text>
-            </Pressable>
-          </>
-        ) : (
-          <View style={styles.authContainer}>
-            <Text style={styles.authTitle}>Iniciar Sesión</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Email"
-              value={email}
-              onChangeText={setEmail}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Contraseña"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-            />
-            <Pressable onPress={() => handleAuth(true)} style={styles.logIn}><Text>Iniciar Sesión </Text></Pressable>
-            <Pressable onPress={() => handleAuth(false)} style={styles.register}><Text>Registrarse </Text></Pressable>
-          </View>
-        )}
+                    {
+                      !isSelected(item.id) && item.actualReps !== item.totalReps ? (
+                        <Pressable style={styles.addRepsButton} onPress={() => updateReps(item.id)}>
+                          <Text style={styles.addRepsText}>+10</Text>
+                        </Pressable>
+                      ) : <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <Text style={{ fontSize: 24 }}>😊</Text>
+                        <Icon name="check" size={20} color="green" />
+                      </View>
+                    }
+                  </TouchableOpacity>
+                )}
+              />
+              <Pressable style={styles.addButton} onPress={() => setVisible(true)}>
+                <Text style={styles.addButtonText}>+</Text>
+              </Pressable>
+            </>
+          ) : (
+            <View style={styles.authContainer}>
+              <Text style={styles.authTitle}>Iniciar Sesión</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Email"
+                value={email}
+                onChangeText={setEmail}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Contraseña"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+              />
+              <Pressable onPress={() => handleAuth(true)} style={styles.logIn}><Text>Iniciar Sesión </Text></Pressable>
+              <Pressable onPress={() => handleAuth(false)} style={styles.register}><Text>Registrarse </Text></Pressable>
+            </View>
+          )}
         <Modal visible={visible} animationType="slide" onRequestClose={() => setVisible(false)}>
           <View style={styles.modalContainer}>
             <Text style={styles.modalTitle}>Agregar Ejercicio</Text>
@@ -310,7 +367,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   selectedItem: {
-    backgroundColor: '#e3f2fd',
+    backgroundColor: '#c51818',
   },
   exerciseName: {
     fontSize: 16,
