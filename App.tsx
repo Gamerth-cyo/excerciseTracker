@@ -19,7 +19,6 @@ import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { StatusBar } from 'expo-status-bar';
 
-
 type Exercises = { actualReps: number, totalReps: number, id: string, exerciseName: string };
 
 export default function App() {
@@ -31,6 +30,7 @@ export default function App() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [user, setUser] = useState<User | null>(null);
+  const [showCompleteModal, setShowCompleteModal] = useState(false);
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged((currentUser) => {
@@ -51,7 +51,8 @@ export default function App() {
       const docRef = doc(db, 'exercises', uid);
       const userExercises = await getDoc(docRef);
       if (userExercises.exists()) {
-        setExercises(userExercises.data().list || []);
+        const data = userExercises.data();
+        setExercises(data.list || []);
       } else {
         console.log('El documento no existe.');
       }
@@ -60,10 +61,13 @@ export default function App() {
     }
   };
 
-  const saveExercises = async (uid: string, exercisesList: any) => {
+  const saveExercises = async (uid: string, exercisesList: any, completeRoutines?: number) => {
     try {
       const docRef = doc(db, 'exercises', uid);
-      await setDoc(docRef, { list: exercisesList });
+      await setDoc(docRef, {
+        list: exercisesList,
+        ...(completeRoutines !== undefined && { completeRoutines }),
+      });
     } catch (error) {
       console.error('Error al guardar ejercicios:', error);
     }
@@ -95,6 +99,31 @@ export default function App() {
         : exercise
     );
     setExercises(updatedExercises);
+    checkCompletion(updatedExercises);
+  };
+
+  const checkCompletion = async (updatedExercises: Exercises[]) => {
+    const allCompleted = updatedExercises.every(
+      (exercise) => exercise.actualReps >= exercise.totalReps
+    );
+    if (allCompleted) {
+      setShowCompleteModal(true);
+
+      // Reset all reps to 0 and increment completeRoutines
+      const updatedList = updatedExercises.map((exercise) => ({
+        ...exercise,
+        actualReps: 0,
+      }));
+
+      const docRef = doc(db, 'exercises', user?.uid || '');
+      const docSnapshot = await getDoc(docRef);
+      const completeRoutines = docSnapshot.exists()
+        ? (docSnapshot.data().completeRoutines || 0) + 1
+        : 1;
+
+      setExercises(updatedList);
+      saveExercises(user?.uid || '', updatedList, completeRoutines);
+    }
   };
 
   const handleAuth = async (isLogin: boolean) => {
@@ -104,8 +133,7 @@ export default function App() {
 
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const userUid = userCredential.user.uid;
-      await saveExercises(userUid, []);
-
+      await saveExercises(userUid, [], 0); // Initialize `completeRoutines` with 0
     } catch (error: any) {
       alert(error.message);
     }
@@ -120,8 +148,7 @@ export default function App() {
     setSelectedExercises((prevSelected) => {
       const newArr = exercises.filter((exercise) => {
         if (exercise.id === id) return exercise;
-      })
-      console.log("newArr-->", newArr);
+      });
       return [...prevSelected, ...newArr];
     });
     Vibration.vibrate(100);
@@ -132,145 +159,139 @@ export default function App() {
       if (!prevSelected?.length) return prevSelected;
       let isSelected = false;
       prevSelected.forEach((selected) => {
-        if (selected.id === item.id) return isSelected = true;
+        if (selected.id === item.id) return (isSelected = true);
       });
       if (isSelected) {
-        return prevSelected.filter((selected) => {
-          if (selected.id !== item.id) return selected;
-        })
+        return prevSelected.filter((selected) => selected.id !== item.id);
       }
       return [...prevSelected, item];
     });
   };
 
   const deleteSelected = async () => {
-    const remainingExercises = exercises.filter((exercise) =>
-      !selectedExercises.some((selected) => selected.id === exercise.id)
+    const remainingExercises = exercises.filter(
+      (exercise) =>
+        !selectedExercises.some((selected) => selected.id === exercise.id)
     );
-
-    console.log("remainingExercises --->", remainingExercises);
-
-    setExercises(remainingExercises); // Actualiza el estado de los ejercicios
-    setSelectedExercises([]); // Limpia los ejercicios seleccionados
-
+    setExercises(remainingExercises);
+    setSelectedExercises([]);
     if (user?.uid) {
-      await saveExercises(user.uid, remainingExercises); // Guarda los ejercicios restantes
+      await saveExercises(user.uid, remainingExercises);
     }
   };
 
-
   const refreshSelected = async () => {
-    const remainingExercises = selectedExercises.map((selected) => {
-      const newArr = exercises.filter((item) => { if (item.id === selected.id) return item; });
-      return newArr;
-    }).flat(Infinity);
+    const updatedExercises = selectedExercises.map((selected) => ({
+      ...selected,
+      actualReps: 0,
+    }));
 
-    console.log("remainingExercises --->", remainingExercises);
-    setExercises((a: any) => {
-      const newArr = [...remainingExercises] as any;
-      newArr.map((item: any) => { item.actualReps = 0; })
-      return a;
-    });
+    const remainingExercises = exercises.map((exercise) =>
+      updatedExercises.find((selected) => selected.id === exercise.id) || exercise
+    );
+
+    setExercises(remainingExercises);
     setSelectedExercises([]);
     if (user?.uid) {
-      await saveExercises(user.uid, remainingExercises.flat());
+      await saveExercises(user.uid, remainingExercises);
     }
   };
 
   const isSelected = (id: string) => {
-    const arr = selectedExercises.filter((item) => item.id === id);
-    if (arr.length) return true;
-    return false;
+    return selectedExercises.some((item) => item.id === id);
   };
 
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.container}>
-        <StatusBar
-          animated={true}
-          backgroundColor="#61dafb"
-        />
-        {
-          user ? (
-            <>
-              <View style={styles.header}>
-                <Text style={styles.headerText}>¡Hola, {user.email}!</Text>
-                <Pressable onPress={logout}>
-                  <Ionicons name="log-out-outline" size={24} color="red" />
+        <StatusBar animated={true} backgroundColor="#61dafb" />
+        {user ? (
+          <>
+            <View style={styles.header}>
+              <Text style={styles.headerText}>¡Hola, {user.email}!</Text>
+              <Pressable onPress={logout}>
+                <Ionicons name="log-out-outline" size={24} color="red" />
+              </Pressable>
+            </View>
+            {selectedExercises.length > 0 && (
+              <View style={styles.deleteBar}>
+                <Text style={styles.deleteText}>
+                  {selectedExercises.length} seleccionado(s)
+                </Text>
+                <Pressable onPress={refreshSelected}>
+                  <MaterialIcons name="refresh" size={24} color="red" />
+                </Pressable>
+                <Pressable onPress={deleteSelected}>
+                  <MaterialIcons name="delete" size={24} color="red" />
                 </Pressable>
               </View>
-              {
-                selectedExercises.length > 0 && (
-                  <View style={styles.deleteBar}>
-                    <Text style={styles.deleteText}>{selectedExercises.length} seleccionado(s)</Text>
-                    <Pressable onPress={refreshSelected}>
-                      <MaterialIcons name="refresh" size={24} color="red" />
-                    </Pressable>
-                    <Pressable onPress={deleteSelected}>
-                      <MaterialIcons name="delete" size={24} color="red" />
-                    </Pressable>
-
+            )}
+            <FlatList
+              style={styles.flatList}
+              data={exercises}
+              keyExtractor={(item) => item.id.toString()}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  onLongPress={() => handleLongPress(item.id)}
+                  style={[
+                    styles.exerciseItem,
+                    isSelected(item.id) && styles.selectedItem,
+                  ]}
+                  onPress={() => handlePress(item)}
+                >
+                  {isSelected(item.id) && (
+                    <Ionicons name="checkmark-circle" size={24} color="blue" />
+                  )}
+                  <View>
+                    <Text style={styles.exerciseName}>{item.exerciseName}</Text>
+                    <Text style={styles.exerciseReps}>
+                      {item.actualReps}/{item.totalReps} repeticiones
+                    </Text>
                   </View>
-                )
-              }
-              <FlatList
-                style={styles.flatList}
-                data={exercises}
-                keyExtractor={(item) => item.id.toString()}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    onLongPress={() => handleLongPress(item.id)}
-                    style={[styles.exerciseItem, isSelected(item.id) && styles.selectedItem]}
-                    onPress={() => handlePress(item)}
-                  >
-                    {
-                      isSelected(item.id) && (
-                        <Ionicons name="checkmark-circle" size={24} color="blue" />
-                      )
-                    }
-                    <View>
-                      <Text style={styles.exerciseName}>{item.exerciseName}</Text>
-                      <Text style={styles.exerciseReps}>
-                        {item.actualReps}/{item.totalReps} repeticiones
-                      </Text>
+                  {!isSelected(item.id) && item.actualReps !== item.totalReps ? (
+                    <Pressable
+                      style={styles.addRepsButton}
+                      onPress={() => updateReps(item.id)}
+                    >
+                      <Text style={styles.addRepsText}>+10</Text>
+                    </Pressable>
+                  ) : (
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 24 }}>😊</Text>
+                      <Icon name="check" size={20} color="green" />
                     </View>
-                    {
-                      !isSelected(item.id) && item.actualReps !== item.totalReps ? (
-                        <Pressable style={styles.addRepsButton} onPress={() => updateReps(item.id)}>
-                          <Text style={styles.addRepsText}>+10</Text>
-                        </Pressable>
-                      ) : <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                        <Text style={{ fontSize: 24 }}>😊</Text>
-                        <Icon name="check" size={20} color="green" />
-                      </View>
-                    }
-                  </TouchableOpacity>
-                )}
-              />
-              <Pressable style={styles.addButton} onPress={() => setVisible(true)}>
-                <Text style={styles.addButtonText}>+</Text>
-              </Pressable>
-            </>
-          ) : (
-            <View style={styles.authContainer}>
-              <Text style={styles.authTitle}>Iniciar Sesión</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Email"
-                value={email}
-                onChangeText={setEmail}
-              />
-              <TextInput
-                style={styles.input}
-                placeholder="Contraseña"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-              />
-              <Pressable onPress={() => handleAuth(true)} style={styles.logIn}><Text>Iniciar Sesión </Text></Pressable>
-              <Pressable onPress={() => handleAuth(false)} style={styles.register}><Text>Registrarse </Text></Pressable>
-            </View>
-          )}
+                  )}
+                </TouchableOpacity>
+              )}
+            />
+            <Pressable style={styles.addButton} onPress={() => setVisible(true)}>
+              <Text style={styles.addButtonText}>+</Text>
+            </Pressable>
+          </>
+        ) : (
+          <View style={styles.authContainer}>
+            <Text style={styles.authTitle}>Iniciar Sesión</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Email"
+              value={email}
+              onChangeText={setEmail}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Contraseña"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+            />
+            <Pressable onPress={() => handleAuth(true)} style={styles.logIn}>
+              <Text>Iniciar Sesión </Text>
+            </Pressable>
+            <Pressable onPress={() => handleAuth(false)} style={styles.register}>
+              <Text>Registrarse </Text>
+            </Pressable>
+          </View>
+        )}
         <Modal visible={visible} animationType="slide" onRequestClose={() => setVisible(false)}>
           <View style={styles.modalContainer}>
             <Text style={styles.modalTitle}>Agregar Ejercicio</Text>
@@ -290,6 +311,26 @@ export default function App() {
             <Button title="Guardar" onPress={addExercise} />
           </View>
         </Modal>
+        {/* Modal for Routine Completion */}
+        <Modal
+          visible={showCompleteModal}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setShowCompleteModal(false)}
+        >
+          <View style={styles.overlay}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>You did it!</Text>
+              <Text style={styles.modalSubtitle}>
+                Another routine complete!
+              </Text>
+              <Button
+                title="OK!"
+                onPress={() => setShowCompleteModal(false)}
+              />
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
     </SafeAreaProvider>
   );
@@ -297,7 +338,7 @@ export default function App() {
 
 const styles = StyleSheet.create({
   statusBar: {
-    color: '#fffc'
+    color: '#fffc',
   },
   container: {
     flex: 1,
@@ -424,7 +465,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   flatList: {
-    margin: 10
+    margin: 10,
   },
   logIn: {
     backgroundColor: 'dodgerblue',
@@ -438,6 +479,21 @@ const styles = StyleSheet.create({
     color: '#fff',
     padding: 10,
     borderRadius: 8,
-  }
+  },
+  overlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    padding: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  modalSubtitle: {
+    fontSize: 16,
+    marginBottom: 20,
+  },
 });
-
