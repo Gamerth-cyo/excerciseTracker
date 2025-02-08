@@ -31,9 +31,11 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [user, setUser] = useState<User | null>(null);
   const [showCompleteModal, setShowCompleteModal] = useState(false);
+  const [completedRoutines, setCompletedRoutines] = useState(0);
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged((currentUser) => {
+      console.log("current-->", currentUser);
       setUser(currentUser);
     });
     return unsubscribe;
@@ -52,6 +54,8 @@ export default function App() {
       const userExercises = await getDoc(docRef);
       if (userExercises.exists()) {
         const data = userExercises.data();
+        console.log('completedRoutines:', data); // Verifica si el campo existe
+        setCompletedRoutines(data.completedRoutines || 0);
         setExercises(data.list || []);
       } else {
         console.log('El documento no existe.');
@@ -61,12 +65,12 @@ export default function App() {
     }
   };
 
-  const saveExercises = async (uid: string, exercisesList: any, completeRoutines?: number) => {
+  const saveExercises = async (uid: string, exercisesList: any, completedRoutines?: number) => {
     try {
       const docRef = doc(db, 'exercises', uid);
       await setDoc(docRef, {
         list: exercisesList,
-        ...(completeRoutines !== undefined && { completeRoutines }),
+        ...(completedRoutines !== undefined && { completedRoutines }),
       });
     } catch (error) {
       console.error('Error al guardar ejercicios:', error);
@@ -109,7 +113,7 @@ export default function App() {
     if (allCompleted) {
       setShowCompleteModal(true);
 
-      // Reset all reps to 0 and increment completeRoutines
+      // Reset all reps to 0 and increment completedRoutines
       const updatedList = updatedExercises.map((exercise) => ({
         ...exercise,
         actualReps: 0,
@@ -117,12 +121,12 @@ export default function App() {
 
       const docRef = doc(db, 'exercises', user?.uid || '');
       const docSnapshot = await getDoc(docRef);
-      const completeRoutines = docSnapshot.exists()
-        ? (docSnapshot.data().completeRoutines || 0) + 1
+      const completedRoutines = docSnapshot.exists()
+        ? (docSnapshot.data().completedRoutines || 0) + 1
         : 1;
 
       setExercises(updatedList);
-      saveExercises(user?.uid || '', updatedList, completeRoutines);
+      saveExercises(user?.uid || '', updatedList, completedRoutines);
     }
   };
 
@@ -133,7 +137,7 @@ export default function App() {
 
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const userUid = userCredential.user.uid;
-      await saveExercises(userUid, [], 0); // Initialize `completeRoutines` with 0
+      await saveExercises(userUid, [], 0); // Initialize `completedRoutines` with 0
     } catch (error: any) {
       alert(error.message);
     }
@@ -209,6 +213,7 @@ export default function App() {
           <>
             <View style={styles.header}>
               <Text style={styles.headerText}>¡Hola, {user.email}!</Text>
+              <Text style={styles.headerText}>Completed Routines: {completedRoutines}</Text>
               <Pressable onPress={logout}>
                 <Ionicons name="log-out-outline" size={24} color="red" />
               </Pressable>
@@ -345,7 +350,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#202124',
   },
   header: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
@@ -367,7 +372,7 @@ const styles = StyleSheet.create({
   },
   deleteText: {
     color: '#d32f2f',
-    fontSize: 16,
+    fontSize: 20,
   },
   authContainer: {
     flex: 1,
@@ -411,12 +416,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#c51818',
   },
   exerciseName: {
-    fontSize: 16,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#fffc',
   },
   exerciseReps: {
-    fontSize: 14,
+    fontSize: 18,
     color: '#fffc',
   },
   addRepsButton: {
@@ -427,7 +432,7 @@ const styles = StyleSheet.create({
   },
   addRepsText: {
     color: '#fff',
-    fontSize: 14,
+    fontSize: 18,
     fontWeight: 'bold',
   },
   addButton: {
@@ -493,7 +498,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalSubtitle: {
-    fontSize: 16,
+    fontSize: 20,
     marginBottom: 20,
   },
 });
