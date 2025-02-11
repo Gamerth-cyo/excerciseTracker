@@ -12,14 +12,19 @@ import {
   Vibration,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { auth, db } from './firebaseconfig.js';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, User } from 'firebase/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { StatusBar } from 'expo-status-bar';
 
-type Exercises = { actualReps: number, totalReps: number, id: string, exerciseName: string };
+type Exercises = { 
+  actualReps: number, 
+  totalReps: number, 
+  id: string | number, 
+  exerciseName: string 
+};
+
+type User = { email: string };
 
 export default function App() {
   const [exercises, setExercises] = useState<Exercises[]>([]);
@@ -33,50 +38,56 @@ export default function App() {
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [completedRoutines, setCompletedRoutines] = useState(0);
 
+  // Al iniciar, se revisa si hay un usuario "logueado" en AsyncStorage
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((currentUser) => {
-      console.log("current-->", currentUser);
-      setUser(currentUser);
-    });
-    return unsubscribe;
+    const checkCurrentUser = async () => {
+      const currentUser = await AsyncStorage.getItem("currentUser");
+      if (currentUser) {
+        setUser(JSON.parse(currentUser));
+      }
+    };
+    checkCurrentUser();
   }, []);
 
+  // Cuando el usuario cambia, se cargan los ejercicios asociados
   useEffect(() => {
     if (user) {
-      console.log('user-------->', JSON.stringify(user, null, 2));
-      fetchExercises(user.uid);
+      fetchExercises(user.email);
     }
   }, [user]);
 
-  const fetchExercises = async (uid: string) => {
+  // Obtiene la lista de ejercicios y la cantidad de rutinas completadas para el usuario dado
+  const fetchExercises = async (email: string) => {
     try {
-      const docRef = doc(db, 'exercises', uid);
-      const userExercises = await getDoc(docRef);
-      if (userExercises.exists()) {
-        const data = userExercises.data();
-        console.log('completedRoutines:', data); // Verifica si el campo existe
+      const exercisesData = await AsyncStorage.getItem(`exercises:${email}`);
+      if (exercisesData) {
+        const data = JSON.parse(exercisesData);
         setCompletedRoutines(data.completedRoutines || 0);
         setExercises(data.list || []);
       } else {
-        console.log('El documento no existe.');
+        console.log('No se encontraron datos de ejercicios.');
       }
     } catch (error) {
       console.error('Error al obtener ejercicios:', error);
     }
   };
 
-  const saveExercises = async (uid: string, exercisesList: any, completedRoutines?: number) => {
+  // Guarda la lista de ejercicios y (si se pasa) el contador de rutinas completadas
+  const saveExercises = async (email: string, exercisesList: Exercises[], newCompletedRoutines?: number) => {
     try {
-      const docRef = doc(db, 'exercises', uid);
-      await setDoc(docRef, {
+      const currentDataStr = await AsyncStorage.getItem(`exercises:${email}`);
+      let currentData = currentDataStr ? JSON.parse(currentDataStr) : { list: [], completedRoutines: 0 };
+      const data = {
         list: exercisesList,
-        ...(completedRoutines !== undefined && { completedRoutines }),
-      });
+        completedRoutines: newCompletedRoutines !== undefined ? newCompletedRoutines : currentData.completedRoutines,
+      };
+      await AsyncStorage.setItem(`exercises:${email}`, JSON.stringify(data));
     } catch (error) {
       console.error('Error al guardar ejercicios:', error);
     }
   };
 
+  // Agrega un nuevo ejercicio a la lista
   const addExercise = () => {
     if (!exerciseName || !totalReps) {
       alert('Por favor completa todos los campos');
@@ -89,14 +100,17 @@ export default function App() {
       actualReps: 0,
     };
     const updatedExercises = [...exercises, newExercise];
-    setExercises(updatedExercises as any);
-    saveExercises(user?.uid as string, updatedExercises);
+    setExercises(updatedExercises);
+    if (user) {
+      saveExercises(user.email, updatedExercises);
+    }
     setExerciseName('');
     setTotalReps('');
     setVisible(false);
   };
 
-  const updateReps = (id: any) => {
+  // Actualiza las repeticiones de un ejercicio y verifica si se completó la rutina
+  const updateReps = (id: string | number) => {
     const updatedExercises = exercises.map((exercise) =>
       exercise.id === id
         ? { ...exercise, actualReps: Math.min(exercise.actualReps + 10, exercise.totalReps) }
@@ -106,53 +120,81 @@ export default function App() {
     checkCompletion(updatedExercises);
   };
 
+  // Comprueba si todos los ejercicios alcanzaron el número total de repeticiones
+  // En ese caso, reinicia los contadores y actualiza las rutinas completadas
   const checkCompletion = async (updatedExercises: Exercises[]) => {
     const allCompleted = updatedExercises.every(
       (exercise) => exercise.actualReps >= exercise.totalReps
     );
     if (allCompleted) {
       setShowCompleteModal(true);
-
-      // Reset all reps to 0 and increment completedRoutines
       const updatedList = updatedExercises.map((exercise) => ({
         ...exercise,
         actualReps: 0,
       }));
-
-      const docRef = doc(db, 'exercises', user?.uid || '');
-      const docSnapshot = await getDoc(docRef);
-      const completedRoutines = docSnapshot.exists()
-        ? (docSnapshot.data().completedRoutines || 0) + 1
-        : 1;
-
+      let currentCompleted = 0;
+      const storedDataStr = user ? await AsyncStorage.getItem(`exercises:${user.email}`) : null;
+      if (storedDataStr) {
+        const data = JSON.parse(storedDataStr);
+        currentCompleted = data.completedRoutines || 0;
+      }
+      const newCompletedRoutines = currentCompleted + 1;
       setExercises(updatedList);
-      saveExercises(user?.uid || '', updatedList, completedRoutines);
+      if (user) {
+        await saveExercises(user.email, updatedList, newCompletedRoutines);
+        setCompletedRoutines(newCompletedRoutines);
+      }
     }
   };
 
+  // Maneja el registro/inicio de sesión
   const handleAuth = async (isLogin: boolean) => {
     try {
-      if (isLogin)
-        return await signInWithEmailAndPassword(auth, email, password);
-
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const userUid = userCredential.user.uid;
-      await saveExercises(userUid, [], 0); // Initialize `completedRoutines` with 0
+      if (isLogin) {
+        // Inicio de sesión: se busca el usuario en AsyncStorage
+        const storedUserStr = await AsyncStorage.getItem(`user:${email}`);
+        if (!storedUserStr) {
+          alert("El usuario no existe");
+          return;
+        }
+        const storedUser = JSON.parse(storedUserStr);
+        if (storedUser.password !== password) {
+          alert("Contraseña incorrecta");
+          return;
+        }
+        const userObj = { email };
+        setUser(userObj);
+        await AsyncStorage.setItem("currentUser", JSON.stringify(userObj));
+        fetchExercises(email);
+      } else {
+        // Registro: se verifica que el usuario no exista y se guarda la información
+        const storedUserStr = await AsyncStorage.getItem(`user:${email}`);
+        if (storedUserStr) {
+          alert("El usuario ya existe");
+          return;
+        }
+        const newUser = { email, password };
+        await AsyncStorage.setItem(`user:${email}`, JSON.stringify(newUser));
+        const userObj = { email };
+        setUser(userObj);
+        await AsyncStorage.setItem("currentUser", JSON.stringify(userObj));
+        await saveExercises(email, [], 0);
+      }
     } catch (error: any) {
       alert(error.message);
     }
   };
 
-  const logout = () => {
-    auth.signOut();
+  // Cierra sesión eliminando el usuario actual de AsyncStorage
+  const logout = async () => {
+    await AsyncStorage.removeItem("currentUser");
+    setUser(null);
     setExercises([]);
   };
 
-  const handleLongPress = (id: string) => {
+  const handleLongPress = (id: string | number) => {
     setSelectedExercises((prevSelected) => {
-      const newArr = exercises.filter((exercise) => {
-        if (exercise.id === id) return exercise;
-      });
+      const newArr = exercises.filter((exercise) => exercise.id === id);
       return [...prevSelected, ...newArr];
     });
     Vibration.vibrate(100);
@@ -163,7 +205,7 @@ export default function App() {
       if (!prevSelected?.length) return prevSelected;
       let isSelected = false;
       prevSelected.forEach((selected) => {
-        if (selected.id === item.id) return (isSelected = true);
+        if (selected.id === item.id) isSelected = true;
       });
       if (isSelected) {
         return prevSelected.filter((selected) => selected.id !== item.id);
@@ -179,8 +221,8 @@ export default function App() {
     );
     setExercises(remainingExercises);
     setSelectedExercises([]);
-    if (user?.uid) {
-      await saveExercises(user.uid, remainingExercises);
+    if (user) {
+      await saveExercises(user.email, remainingExercises);
     }
   };
 
@@ -196,12 +238,12 @@ export default function App() {
 
     setExercises(remainingExercises);
     setSelectedExercises([]);
-    if (user?.uid) {
-      await saveExercises(user.uid, remainingExercises);
+    if (user) {
+      await saveExercises(user.email, remainingExercises);
     }
   };
 
-  const isSelected = (id: string) => {
+  const isSelected = (id: string | number) => {
     return selectedExercises.some((item) => item.id === id);
   };
 
@@ -316,7 +358,6 @@ export default function App() {
             <Button title="Guardar" onPress={addExercise} />
           </View>
         </Modal>
-        {/* Modal for Routine Completion */}
         <Modal
           visible={showCompleteModal}
           animationType="slide"
@@ -326,9 +367,7 @@ export default function App() {
           <View style={styles.overlay}>
             <View style={styles.modalContent}>
               <Text style={styles.modalTitle}>You did it!</Text>
-              <Text style={styles.modalSubtitle}>
-                Another routine complete!
-              </Text>
+              <Text style={styles.modalSubtitle}>Another routine complete!</Text>
               <Button
                 title="OK!"
                 onPress={() => setShowCompleteModal(false)}
@@ -474,14 +513,12 @@ const styles = StyleSheet.create({
   },
   logIn: {
     backgroundColor: 'dodgerblue',
-    color: '#fff',
     marginBottom: 10,
     padding: 10,
     borderRadius: 8,
   },
   register: {
     backgroundColor: 'dodgerblue',
-    color: '#fff',
     padding: 10,
     borderRadius: 8,
   },
