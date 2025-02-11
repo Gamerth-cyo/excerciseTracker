@@ -411,7 +411,7 @@ export default function App() {
 }
 
 const StatisticsModal = ({ visible, onClose, userEmail }: { visible: boolean, onClose: () => void, userEmail: string }) => {
-  const [data, setData] = useState({ labels: [], datasets: [{ data: [] }] });
+  const [data, setData] = useState<{ labels: string[], datasets: { data: number[] }[] }>({ labels: [], datasets: [{ data: [] }] });
   const [selectedPeriod, setSelectedPeriod] = useState('day');
 
   useEffect(() => {
@@ -544,6 +544,8 @@ const StatisticsModal = ({ visible, onClose, userEmail }: { visible: boolean, on
           height={220}
           chartConfig={chartConfig}
           style={{ marginVertical: 8, borderRadius: 16 }}
+          yAxisLabel=""
+          yAxisSuffix=""
         />
         <Button title="Cerrar" onPress={onClose} />
       </View>
