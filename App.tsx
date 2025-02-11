@@ -10,12 +10,14 @@ import {
   FlatList,
   TouchableOpacity,
   Vibration,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { StatusBar } from 'expo-status-bar';
+import { BarChart } from 'react-native-chart-kit';
 
 type Exercises = { 
   actualReps: number, 
@@ -37,8 +39,8 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [completedRoutines, setCompletedRoutines] = useState(0);
+  const [showStatisticsModal, setShowStatisticsModal] = useState(false);
 
-  // Al iniciar, se revisa si hay un usuario "logueado" en AsyncStorage
   useEffect(() => {
     const checkCurrentUser = async () => {
       const currentUser = await AsyncStorage.getItem("currentUser");
@@ -49,14 +51,12 @@ export default function App() {
     checkCurrentUser();
   }, []);
 
-  // Cuando el usuario cambia, se cargan los ejercicios asociados
   useEffect(() => {
     if (user) {
       fetchExercises(user.email);
     }
   }, [user]);
 
-  // Obtiene la lista de ejercicios y la cantidad de rutinas completadas para el usuario dado
   const fetchExercises = async (email: string) => {
     try {
       const exercisesData = await AsyncStorage.getItem(`exercises:${email}`);
@@ -72,7 +72,6 @@ export default function App() {
     }
   };
 
-  // Guarda la lista de ejercicios y (si se pasa) el contador de rutinas completadas
   const saveExercises = async (email: string, exercisesList: Exercises[], newCompletedRoutines?: number) => {
     try {
       const currentDataStr = await AsyncStorage.getItem(`exercises:${email}`);
@@ -87,7 +86,19 @@ export default function App() {
     }
   };
 
-  // Agrega un nuevo ejercicio a la lista
+  const recordRoutineCompletion = async () => {
+    if (!user) return;
+    try {
+      const currentTime = new Date().toISOString();
+      let historyStr = await AsyncStorage.getItem(`routineHistory:${user.email}`);
+      let history = historyStr ? JSON.parse(historyStr) : [];
+      history.push(currentTime);
+      await AsyncStorage.setItem(`routineHistory:${user.email}`, JSON.stringify(history));
+    } catch (error) {
+      console.error("Error al registrar la rutina completada:", error);
+    }
+  };
+
   const addExercise = () => {
     if (!exerciseName || !totalReps) {
       alert('Por favor completa todos los campos');
@@ -109,7 +120,6 @@ export default function App() {
     setVisible(false);
   };
 
-  // Actualiza las repeticiones de un ejercicio y verifica si se completó la rutina
   const updateReps = (id: string | number) => {
     const updatedExercises = exercises.map((exercise) =>
       exercise.id === id
@@ -117,11 +127,15 @@ export default function App() {
         : exercise
     );
     setExercises(updatedExercises);
+    
+    const updatedExercise = updatedExercises.find((exercise) => exercise.id === id);
+    if (updatedExercise && updatedExercise.actualReps === updatedExercise.totalReps) {
+      Vibration.vibrate(500);
+    }
+    
     checkCompletion(updatedExercises);
   };
 
-  // Comprueba si todos los ejercicios alcanzaron el número total de repeticiones
-  // En ese caso, reinicia los contadores y actualiza las rutinas completadas
   const checkCompletion = async (updatedExercises: Exercises[]) => {
     const allCompleted = updatedExercises.every(
       (exercise) => exercise.actualReps >= exercise.totalReps
@@ -143,15 +157,14 @@ export default function App() {
       if (user) {
         await saveExercises(user.email, updatedList, newCompletedRoutines);
         setCompletedRoutines(newCompletedRoutines);
+        recordRoutineCompletion();
       }
     }
   };
 
-  // Maneja el registro/inicio de sesión
   const handleAuth = async (isLogin: boolean) => {
     try {
       if (isLogin) {
-        // Inicio de sesión: se busca el usuario en AsyncStorage
         const storedUserStr = await AsyncStorage.getItem(`user:${email}`);
         if (!storedUserStr) {
           alert("El usuario no existe");
@@ -167,7 +180,6 @@ export default function App() {
         await AsyncStorage.setItem("currentUser", JSON.stringify(userObj));
         fetchExercises(email);
       } else {
-        // Registro: se verifica que el usuario no exista y se guarda la información
         const storedUserStr = await AsyncStorage.getItem(`user:${email}`);
         if (storedUserStr) {
           alert("El usuario ya existe");
@@ -185,7 +197,6 @@ export default function App() {
     }
   };
 
-  // Cierra sesión eliminando el usuario actual de AsyncStorage
   const logout = async () => {
     await AsyncStorage.removeItem("currentUser");
     setUser(null);
@@ -254,11 +265,17 @@ export default function App() {
         {user ? (
           <>
             <View style={styles.header}>
-              <Text style={styles.headerText}>¡Hola, {user.email}!</Text>
-              <Text style={styles.headerText}>Completed Routines: {completedRoutines}</Text>
-              <Pressable onPress={logout}>
-                <Ionicons name="log-out-outline" size={24} color="red" />
-              </Pressable>
+              <View style={styles.headerTop}>
+                <Text style={styles.headerText}>¡Hola, {user.email}!</Text>
+                <Pressable onPress={logout}>
+                  <Ionicons name="log-out-outline" size={24} color="red" />
+                </Pressable>
+              </View>
+              <View style={styles.headerBottom}>
+                <Text style={styles.headerText}>
+                  Rutinas Completadas: {completedRoutines}
+                </Text>
+              </View>
             </View>
             {selectedExercises.length > 0 && (
               <View style={styles.deleteBar}>
@@ -311,9 +328,22 @@ export default function App() {
                 </TouchableOpacity>
               )}
             />
+            {/* Botón flotante para agregar ejercicio (abajo a la derecha) */}
             <Pressable style={styles.addButton} onPress={() => setVisible(true)}>
               <Text style={styles.addButtonText}>+</Text>
             </Pressable>
+            {/* Botón flotante para ver estadísticas (abajo a la izquierda) */}
+            <Pressable
+              style={styles.statsButtonFloating}
+              onPress={() => setShowStatisticsModal(true)}
+            >
+              <Ionicons name="bar-chart-outline" size={28} color="#fff" />
+            </Pressable>
+            <StatisticsModal
+              visible={showStatisticsModal}
+              onClose={() => setShowStatisticsModal(false)}
+              userEmail={user.email}
+            />
           </>
         ) : (
           <View style={styles.authContainer}>
@@ -366,8 +396,8 @@ export default function App() {
         >
           <View style={styles.overlay}>
             <View style={styles.modalContent}>
-              <Text style={styles.modalTitle}>You did it!</Text>
-              <Text style={styles.modalSubtitle}>Another routine complete!</Text>
+              <Text style={styles.modalTitle}>¡Rutina Completada!</Text>
+              <Text style={styles.modalSubtitle}>Otra rutina terminada.</Text>
               <Button
                 title="OK!"
                 onPress={() => setShowCompleteModal(false)}
@@ -380,6 +410,147 @@ export default function App() {
   );
 }
 
+const StatisticsModal = ({ visible, onClose, userEmail }: { visible: boolean, onClose: () => void, userEmail: string }) => {
+  const [data, setData] = useState({ labels: [], datasets: [{ data: [] }] });
+  const [selectedPeriod, setSelectedPeriod] = useState('day');
+
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const historyStr = await AsyncStorage.getItem(`routineHistory:${userEmail}`);
+        let history = historyStr ? JSON.parse(historyStr) : [];
+        // Convertir las fechas a objetos Date
+        history = history.map((item: string) => new Date(item));
+        let aggregated: { [key: string]: number } = {};
+        if (selectedPeriod === 'day') {
+          history.forEach((date: Date) => {
+            const key = date.toISOString().split('T')[0];
+            aggregated[key] = (aggregated[key] || 0) + 1;
+          });
+        } else if (selectedPeriod === 'week') {
+          history.forEach((date: Date) => {
+            const key = getWeekString(date);
+            aggregated[key] = (aggregated[key] || 0) + 1;
+          });
+        } else if (selectedPeriod === 'month') {
+          history.forEach((date: Date) => {
+            const key = date.getFullYear() + '-' + (date.getMonth() + 1).toString().padStart(2, '0');
+            aggregated[key] = (aggregated[key] || 0) + 1;
+          });
+        } else if (selectedPeriod === 'year') {
+          history.forEach((date: Date) => {
+            const key = date.getFullYear().toString();
+            aggregated[key] = (aggregated[key] || 0) + 1;
+          });
+        }
+        const sortedKeys = Object.keys(aggregated).sort();
+        const counts = sortedKeys.map(key => aggregated[key]);
+        setData({ labels: sortedKeys, datasets: [{ data: counts }] });
+      } catch (error) {
+        console.error(error);
+      }
+    };
+    loadData();
+  }, [selectedPeriod, userEmail]);
+
+  const getWeekString = (date: Date) => {
+    const tempDate = new Date(date.getTime());
+    tempDate.setHours(0, 0, 0, 0);
+    tempDate.setDate(tempDate.getDate() + 3 - ((tempDate.getDay() + 6) % 7));
+    const week1 = new Date(tempDate.getFullYear(), 0, 4);
+    const weekNumber = 1 + Math.round(((tempDate.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
+    return tempDate.getFullYear() + '-W' + weekNumber;
+  };
+
+  const chartConfig = {
+    backgroundGradientFrom: "#1E2923",
+    backgroundGradientFromOpacity: 0,
+    backgroundGradientTo: "#08130D",
+    backgroundGradientToOpacity: 0.5,
+    color: (opacity = 1) => `rgba(26, 255, 146, ${opacity})`,
+    strokeWidth: 2,
+    barPercentage: 0.5,
+    useShadowColorFromDataset: false,
+    labelFontSize: 16
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalContainer}>
+        <Text style={[styles.modalTitle, { fontSize: 24 }]}>
+          Estadísticas de Rutinas Completadas
+        </Text>
+        <View style={styles.periodButtons}>
+          <TouchableOpacity
+            style={[
+              styles.pillButton,
+              selectedPeriod === 'day' && styles.pillButtonActive,
+            ]}
+            onPress={() => setSelectedPeriod('day')}
+          >
+            <Text style={[
+              styles.pillButtonText,
+              selectedPeriod === 'day' && styles.pillButtonTextActive
+            ]}>
+              Día
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.pillButton,
+              selectedPeriod === 'week' && styles.pillButtonActive,
+            ]}
+            onPress={() => setSelectedPeriod('week')}
+          >
+            <Text style={[
+              styles.pillButtonText,
+              selectedPeriod === 'week' && styles.pillButtonTextActive
+            ]}>
+              Semana
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.pillButton,
+              selectedPeriod === 'month' && styles.pillButtonActive,
+            ]}
+            onPress={() => setSelectedPeriod('month')}
+          >
+            <Text style={[
+              styles.pillButtonText,
+              selectedPeriod === 'month' && styles.pillButtonTextActive
+            ]}>
+              Mes
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.pillButton,
+              selectedPeriod === 'year' && styles.pillButtonActive,
+            ]}
+            onPress={() => setSelectedPeriod('year')}
+          >
+            <Text style={[
+              styles.pillButtonText,
+              selectedPeriod === 'year' && styles.pillButtonTextActive
+            ]}>
+              Año
+            </Text>
+          </TouchableOpacity>
+        </View>
+        <BarChart
+          data={data}
+          width={Dimensions.get("window").width - 16}
+          height={220}
+          chartConfig={chartConfig}
+          style={{ marginVertical: 8, borderRadius: 16 }}
+        />
+        <Button title="Cerrar" onPress={onClose} />
+      </View>
+    </Modal>
+  );
+};
+
 const styles = StyleSheet.create({
   statusBar: {
     color: '#fffc',
@@ -389,12 +560,20 @@ const styles = StyleSheet.create({
     backgroundColor: '#202124',
   },
   header: {
-    flexDirection: 'column',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
     backgroundColor: '#6200ee',
+  },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  headerBottom: {
+    marginTop: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   headerText: {
     color: '#fff',
@@ -495,12 +674,28 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: 'bold',
   },
+  statsButtonFloating: {
+    position: 'absolute',
+    bottom: 16,
+    left: 16,
+    width: 60,
+    height: 60,
+    backgroundColor: '#6200ee',
+    borderRadius: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 5,
+  },
   modalContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 16,
-    backgroundColor: '#fff',
+    backgroundColor: '#000',
   },
   modalTitle: {
     fontSize: 20,
@@ -537,5 +732,30 @@ const styles = StyleSheet.create({
   modalSubtitle: {
     fontSize: 20,
     marginBottom: 20,
+  },
+  periodButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    width: '100%',
+    marginBottom: 10,
+  },
+  pillButton: {
+    backgroundColor: '#f0f0f0',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginHorizontal: 5,
+    alignItems: 'center',
+  },
+  pillButtonActive: {
+    backgroundColor: '#6200ee',
+  },
+  pillButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#6200ee',
+  },
+  pillButtonTextActive: {
+    color: '#fff',
   },
 });
